@@ -1,47 +1,67 @@
-﻿using FYP.Models;
-using System.Net.Mail;
+﻿using System;
 using System.Net;
+using System.Net.Mail;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 
 public class EmailService
 {
-    private readonly SmtpSettings _smtpSettings;
+    private readonly IConfiguration _configuration;
 
     public EmailService(IConfiguration configuration)
     {
-        _smtpSettings = configuration.GetSection("SmtpSettings").Get<SmtpSettings>();
+        _configuration = configuration;
     }
 
-    public async Task<bool> SendEmailAsync(string recipient, string subject, string body)
+    public async Task<bool> SendEmailAsync(string recipientEmail, string subject, string body)
     {
         try
         {
-            var fromAddress = new MailAddress(_smtpSettings.Username, "Uzaifa Khan");
-            var toAddress = new MailAddress(recipient);
+            var smtpSettings = _configuration.GetSection("SmtpSettings");
+            string host = smtpSettings["Host"];
+            int port = int.Parse(smtpSettings["Port"]);
+            string username = smtpSettings["Username"];
+            string password = smtpSettings["Password"];
+            bool enableSSL = bool.Parse(smtpSettings["EnableSSL"]);
 
-            using (var smtp = new SmtpClient(_smtpSettings.Host, _smtpSettings.Port))
+            // Validate SMTP credentials
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
             {
-                smtp.EnableSsl = _smtpSettings.EnableSSL;
-                smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
-                smtp.UseDefaultCredentials = false;
-                smtp.Credentials = new NetworkCredential(fromAddress.Address, _smtpSettings.Password);
+                Console.WriteLine("SMTP credentials are missing or invalid.");
+                return false;
+            }
 
-                using (var message = new MailMessage(fromAddress, toAddress)
+            using (var smtpClient = new SmtpClient(host, port))
+            {
+                smtpClient.Credentials = new NetworkCredential(username, password);
+                smtpClient.EnableSsl = enableSSL;
+                smtpClient.DeliveryMethod = SmtpDeliveryMethod.Network;
+                smtpClient.UseDefaultCredentials = false;
+
+                var mailMessage = new MailMessage
                 {
+                    From = new MailAddress(username, "Voice OF Customer"),
                     Subject = subject,
                     Body = body,
                     IsBodyHtml = true
-                })
-                {
-                    await smtp.SendMailAsync(message);
-                    Console.WriteLine("✅ Email sent successfully!");
-                    return true; // Indicate success
-                }
+                };
+
+                mailMessage.To.Add(recipientEmail);
+
+                await smtpClient.SendMailAsync(mailMessage);
+                Console.WriteLine($"✅ Email sent successfully to {recipientEmail}");
+                return true;
             }
+        }
+        catch (SmtpException smtpEx)
+        {
+            Console.WriteLine($"❌ SMTP Error: {smtpEx.Message}");
+            return false;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error: {ex.Message}");
-            return false; // Indicate failure
+            Console.WriteLine($"❌ General Error: {ex.Message}");
+            return false;
         }
     }
 }

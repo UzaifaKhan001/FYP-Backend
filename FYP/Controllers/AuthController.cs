@@ -4,7 +4,7 @@ using FYP.Repository;
 using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Identity.Data;
+using Microsoft.AspNetCore.Identity;
 
 namespace FYP.Controllers
 {
@@ -19,7 +19,13 @@ namespace FYP.Controllers
         private readonly UserRepository _userRepository;
         private readonly EmailService _emailSender;
 
-        public AuthController(UserService userService, EmailService emailSender, JwtService jwtService, UserSettingsRepository userSettingsRepository, NotificationRepository notificationRepository, UserRepository userRepository)
+        public AuthController(
+            UserService userService,
+            EmailService emailSender,
+            JwtService jwtService,
+            UserSettingsRepository userSettingsRepository,
+            NotificationRepository notificationRepository,
+            UserRepository userRepository)
         {
             _userService = userService;
             _jwtService = jwtService;
@@ -31,7 +37,7 @@ namespace FYP.Controllers
 
         // Register action
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] FYP.Models.RegisterRequest request)
+        public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
             if (request == null || string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.PasswordHash))
             {
@@ -46,7 +52,6 @@ namespace FYP.Controllers
                     return StatusCode(500, new { message = "User registration failed." });
                 }
 
-                // Insert user settings (async method)
                 var userSettings = new UserSettings
                 {
                     UserId = user.Id,
@@ -65,8 +70,7 @@ namespace FYP.Controllers
                     return StatusCode(500, new { message = "User registered but failed to save settings." });
                 }
 
-                // Send Welcome Email
-                var emailResult = await _emailSender.SendEmailAsync(user.Email, "Welcome to Our Service", "Thank you for registering!");
+                bool emailResult = await _emailSender.SendEmailAsync(user.Email, "Welcome to Our Website", "Thank you for registering!");
                 if (!emailResult)
                 {
                     return StatusCode(500, new { message = "Failed to send welcome email." });
@@ -79,8 +83,9 @@ namespace FYP.Controllers
                 return StatusCode(500, new { message = "An error occurred while processing your registration.", details = ex.Message });
             }
         }
+
         [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] FYP.Models.LoginRequest request)
+        public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
             if (request == null || string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.PasswordHash))
             {
@@ -95,24 +100,20 @@ namespace FYP.Controllers
                     return Unauthorized(new { message = "Invalid credentials." });
                 }
 
-                // Generate JWT Token
                 string token = _jwtService.GenerateJwtToken(user);
 
                 return Ok(new
                 {
                     message = "Login successful.",
-                    token, // Include JWT token in response
+                    token,
                     user = new
                     {
                         user.Id,
                         user.Name,
                         user.Email,
+
                     }
                 });
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return Unauthorized(new { message = ex.Message });
             }
             catch (Exception ex)
             {
@@ -120,10 +121,9 @@ namespace FYP.Controllers
             }
         }
 
-
         // Forgot Password action
         [HttpPost("forget-password")]
-        public async Task<IActionResult> ForgotPassword([FromBody] FYP.Models.ForgotPasswordRequest request)
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
         {
             try
             {
@@ -136,8 +136,14 @@ namespace FYP.Controllers
                 var resetToken = Guid.NewGuid().ToString();
                 await _userService.StorePasswordResetTokenAsync(user.Id, resetToken);
 
-                var resetLink = $"http://localhost:5173//reset-password?token={resetToken}";
-                await _emailSender.SendEmailAsync(user.Email, "Password Reset Request", $"Click the link to reset your password: <a href='{resetLink}'>Reset Password</a>");
+                var resetLink = $"http://localhost:5173/reset-password?email={Uri.EscapeDataString(user.Email)}&token={resetToken}";
+                var emailBody = $"<p>Click the link below to reset your password:</p><p><a href='{resetLink}'>Reset Password</a></p>";
+
+                bool emailSent = await _emailSender.SendEmailAsync(user.Email, "Password Reset Request", emailBody);
+                if (!emailSent)
+                {
+                    return StatusCode(500, new { message = "Failed to send reset email." });
+                }
 
                 return Ok(new { message = "Password reset link sent to your email." });
             }
@@ -146,9 +152,48 @@ namespace FYP.Controllers
                 return StatusCode(500, new { message = "An error occurred while processing your request.", details = ex.Message });
             }
         }
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] Models.ResetPasswordRequest request)
+        {
+            try
+            {
+                var user = await _userService.GetUserByEmailAsync(request.Email);
+                if (user == null)
+                {
+                    return BadRequest(new { message = "User not found." });
+                }
+
+                // Validate the reset token
+                if (string.IsNullOrEmpty(user.ResetToken) || user.ResetToken != request.Token)
+                {
+                    return BadRequest(new { message = "Invalid reset token. Please check your email and try again." });
+                }
+
+                if (!user.ResetTokenExpiration.HasValue || user.ResetTokenExpiration < DateTime.UtcNow)
+                {
+                    return BadRequest(new { message = "Reset link has expired. Please request a new one." });
+                }
+
+                // Hash the new password using BCrypt
+                string newPasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword, workFactor: 12);
+
+                // Update the password and clear the reset token
+                bool passwordUpdated = await _userService.UpdateUserPasswordResetTokenAsync(request.Email, request.Token, newPasswordHash);
+
+                if (!passwordUpdated)
+                {
+                    return StatusCode(500, new { message = "Password update failed." });
+                }
+
+                return Ok(new { message = "Password has been reset successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "An error occurred.", details = ex.Message });
+            }
+        }
 
 
-        // Get User Profile action
         [HttpGet("profile/{userId}")]
         public async Task<IActionResult> GetUserProfile(int userId)
         {
@@ -167,32 +212,6 @@ namespace FYP.Controllers
             }
         }
 
-        // Update User Settings
-        [HttpPut("update-settings")]
-        public async Task<IActionResult> UpdateUserSettings([FromBody] UserSettings settings)
-        {
-            if (settings == null || settings.UserId <= 0)
-            {
-                return BadRequest(new { message = "Invalid user settings data." });
-            }
-
-            try
-            {
-                bool isUpdated = await _userSettingsRepository.UpdateUserSettingsAsync(settings);
-                if (!isUpdated)
-                {
-                    return StatusCode(500, new { message = "Failed to update user settings." });
-                }
-                return Ok(new { message = "User settings updated successfully." });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = "An error occurred.", details = ex.Message });
-            }
-        }
-
-
-        // Update Password
         [HttpPut("update-password")]
         public async Task<IActionResult> UpdateUserPassword([FromBody] UpdatePasswordRequest request)
         {
@@ -214,55 +233,6 @@ namespace FYP.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "An error occurred while updating password.", error = ex.Message });
-            }
-        }
-
-        // Get User Notifications action
-        [HttpGet("notifications/{userId}")]
-        public async Task<IActionResult> GetUserNotifications(int userId)
-        {
-            try
-            {
-                var notifications = await _userService.GetUserNotificationsAsync(userId);
-                return Ok(notifications);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = "Notifications retrieval failed.", details = ex.Message });
-            }
-        }
-
-        // Send Test Email
-        [HttpPost("send-email")]
-        public async Task<IActionResult> SendTestEmail()
-        {
-            try
-            {
-                await _emailSender.SendEmailAsync("recipient@example.com", "Test Subject", "Test Body");
-                return Ok("Email sent successfully!");
-            }
-            catch (Exception ex)
-            {
-                return BadRequest($"Error sending email: {ex.Message}");
-            }
-        }
-
-        // Mark Notification as Read
-        [HttpPost("notifications/mark-read/{notificationId}")]
-        public async Task<IActionResult> MarkNotificationAsRead(int notificationId)
-        {
-            try
-            {
-                var result = await _userService.MarkNotificationAsReadAsync(notificationId);
-                if (result)
-                {
-                    return Ok(new { message = "Notification marked as read." });
-                }
-                return NotFound(new { message = "Notification not found." });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = "An error occurred while marking the notification.", details = ex.Message });
             }
         }
     }

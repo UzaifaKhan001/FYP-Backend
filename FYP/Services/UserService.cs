@@ -42,11 +42,9 @@
             using (var connection = new SqlConnection(_connectionString))
             {
                 await connection.OpenAsync();
-
                 using (var command = new SqlCommand(query, connection))
                 {
                     command.Parameters.AddWithValue("@Email", email);
-
                     using (var reader = await command.ExecuteReaderAsync())
                     {
                         if (await reader.ReadAsync())
@@ -62,12 +60,24 @@
                                 ResetTokenExpiration = reader.IsDBNull(6) ? (DateTime?)null : reader.GetDateTime(6)
                             };
 
-                            if (!VerifyPassword(password, user.PasswordHash))
+                            // Log user details for debugging
+                            Console.WriteLine($"User Found: {user.Email}");
+                            Console.WriteLine($"Stored Hash: {user.PasswordHash}");
+
+                            // Verify the password using BCrypt
+                            if (!BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
                             {
+                                Console.WriteLine($"Entered Password: {password}");
+                                Console.WriteLine("Password verification failed.");
                                 throw new UnauthorizedAccessException("Invalid credentials");
                             }
 
+                            Console.WriteLine("Password verification succeeded.");
                             return user;
+                        }
+                        else
+                        {
+                            Console.WriteLine($"No user found for email: {email}");
                         }
                     }
                 }
@@ -75,6 +85,7 @@
 
             throw new UnauthorizedAccessException("Invalid credentials");
         }
+
 
         // Register User
         public async Task<User> RegisterAsync(string name, string email, string password)
@@ -143,41 +154,8 @@
                 await command.ExecuteNonQueryAsync();
             }
         }
-        // Get User by Email
-        public async Task<User> GetUserByEmailAsync(string email)
-        {
-            const string query = "SELECT Id, Name, Email, PasswordHash, CreatedAt, ResetToken, ResetTokenExpiration FROM Users WHERE Email = @Email";
-
-            using (var connection = new SqlConnection(_connectionString))
-            {
-                await connection.OpenAsync();
-
-                using (var command = new SqlCommand(query, connection))
-                {
-                    command.Parameters.AddWithValue("@Email", email);
-
-                    using (var reader = await command.ExecuteReaderAsync())
-                    {
-                        if (await reader.ReadAsync())
-                        {
-                            return new User
-                            {
-                                Id = reader.GetInt32(0),   // Id
-                                Name = reader.GetString(1),   // Name
-                                Email = reader.GetString(2),  // Email
-                                PasswordHash = reader.GetString(3), // PasswordHash
-                                CreatedAt = reader.IsDBNull(4) ? DateTime.MinValue : reader.GetDateTime(4), // Handle NULL values
-                                ResetToken = reader.IsDBNull(5) ? null : reader.GetString(5),  // Ensure proper NULL handling
-                                ResetTokenExpiration = reader.IsDBNull(6) ? (DateTime?)null : reader.GetDateTime(6) // Ensure proper NULL handling
-                            };
-                        }
-                        return null;
-                    }
-                }
-            }
-        }
-
-
+       
+      
         // Get User Profile by UserId
         public async Task<User> GetUserProfileAsync(int userId)
         {
@@ -252,25 +230,54 @@
             return BCrypt.Net.BCrypt.Verify(enteredPassword, storedHash);
         }
 
-        // Store Password Reset Token
-        public async Task StorePasswordResetTokenAsync(int userId, string resetToken)
+        public async Task<User> GetUserByEmailAsync(string email)
         {
-            const string query = "UPDATE Users SET ResetToken = @ResetToken, ResetTokenExpiration = @Expiration WHERE Id = @UserId";
+            const string query = "SELECT Id, Email, PasswordHash, CreatedAt, ResetToken, ResetTokenExpiration FROM Users WHERE Email = @Email";
+
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+
+                using (var command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@Email", email);
+
+                    using (var reader = await command.ExecuteReaderAsync())
+                    {
+                        if (await reader.ReadAsync())
+                        {
+                            return new User
+                            {
+                                Id = reader.GetInt32(0),
+                                Email = reader.GetString(1),
+                                PasswordHash = reader.GetString(2),
+                                CreatedAt = reader.IsDBNull(3) ? (DateTime?)null : reader.GetDateTime(3),
+                                ResetToken = reader.IsDBNull(4) ? null : reader.GetString(4),
+                                ResetTokenExpiration = reader.IsDBNull(5) ? (DateTime?)null : reader.GetDateTime(5) // ✅ Fix null issue
+                            };
+                        }
+                        return null;
+                    }
+                }
+            }
+        }
+
+        public async Task<bool> StorePasswordResetTokenAsync(int userId, string token)
+        {
+            const string query = "UPDATE Users SET ResetToken = @Token, ResetTokenExpiration = @Expiration, UpdatedAt = @UpdatedAt WHERE Id = @UserId";
 
             using (var connection = new SqlConnection(_connectionString))
             {
                 await connection.OpenAsync();
                 using (var command = new SqlCommand(query, connection))
                 {
-                    command.Parameters.AddWithValue("@ResetToken", (object)resetToken ?? DBNull.Value); // Handle NULL values safely
-                    command.Parameters.AddWithValue("@Expiration", DateTime.UtcNow.AddHours(1)); // Set expiration time (1 hour)
+                    command.Parameters.AddWithValue("@Token", token);
+                    command.Parameters.AddWithValue("@Expiration", DateTime.UtcNow.AddHours(1)); // ✅ Token valid for 1 hour
+                    command.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
                     command.Parameters.AddWithValue("@UserId", userId);
 
                     int rowsAffected = await command.ExecuteNonQueryAsync();
-                    if (rowsAffected == 0)
-                    {
-                        throw new Exception("Failed to store password reset token.");
-                    }
+                    return rowsAffected > 0;
                 }
             }
         }
@@ -335,6 +342,39 @@
                 }
 
                 return true;
+            }
+        }
+
+        // upadet reset password 
+        public async Task<bool> UpdateUserPasswordResetTokenAsync(string email, string token, string newPasswordHash)
+        {
+            if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(token) || string.IsNullOrEmpty(newPasswordHash))
+            {
+                return false;
+            }
+
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+
+                const string updateQuery = @"
+            UPDATE Users 
+            SET PasswordHash = @NewPasswordHash, 
+                ResetToken = NULL, 
+                ResetTokenExpiration = NULL, 
+                UpdatedAt = @UpdatedAt 
+            WHERE Email = @Email AND ResetToken = @Token";
+
+                using (var command = new SqlCommand(updateQuery, connection))
+                {
+                    command.Parameters.AddWithValue("@NewPasswordHash", newPasswordHash);
+                    command.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
+                    command.Parameters.AddWithValue("@Email", email);
+                    command.Parameters.AddWithValue("@Token", token);
+
+                    int rowsAffected = await command.ExecuteNonQueryAsync();
+                    return rowsAffected > 0;
+                }
             }
         }
 
