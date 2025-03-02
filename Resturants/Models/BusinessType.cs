@@ -1,4 +1,4 @@
-﻿namespace FYP.Models
+﻿namespace Restaurants.Models
 {
     public class BusinessType
     {

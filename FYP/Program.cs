@@ -65,10 +65,6 @@ builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<UserService>(); // Ensure UserService is registered correctly
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>(); // Register IPasswordHasher<User>
 
-// Register the Restaurant, Review, and MenuItem repositories
-builder.Services.AddScoped<RestaurantRepository>(provider => new RestaurantRepository(connectionString));
-builder.Services.AddScoped<ReviewRepository>(provider => new ReviewRepository(connectionString));
-
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

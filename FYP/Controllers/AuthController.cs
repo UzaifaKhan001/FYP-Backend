@@ -35,6 +35,12 @@ namespace FYP.Controllers
             _userRepository = userRepository;
         }
 
+        [HttpGet("ping")]
+        public IActionResult Ping()
+        {
+            return Ok(new { message = "Auth service is running." });
+        }
+
         // Register action
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request)
