@@ -14,25 +14,19 @@ namespace FYP.Controllers
     {
         private readonly UserService _userService;
         private readonly JwtService _jwtService;
-        private readonly UserSettingsRepository _userSettingsRepository;
         private readonly NotificationRepository _notificationRepository;
-        private readonly UserRepository _userRepository;
         private readonly EmailService _emailSender;
 
         public AuthController(
             UserService userService,
             EmailService emailSender,
             JwtService jwtService,
-            UserSettingsRepository userSettingsRepository,
-            NotificationRepository notificationRepository,
-            UserRepository userRepository)
+            NotificationRepository notificationRepository)
         {
             _userService = userService;
             _jwtService = jwtService;
-            _userSettingsRepository = userSettingsRepository;
             _emailSender = emailSender;
             _notificationRepository = notificationRepository;
-            _userRepository = userRepository;
         }
 
         [HttpGet("ping")]
@@ -56,24 +50,6 @@ namespace FYP.Controllers
                 if (user == null)
                 {
                     return StatusCode(500, new { message = "User registration failed." });
-                }
-
-                var userSettings = new UserSettings
-                {
-                    UserId = user.Id,
-                    EmailNotifications = true,
-                    PushNotifications = true,
-                    Updates = true,
-                    ProfileVisibility = "Public",
-                    ActivityStatus = true,
-                    EnableSound = true,
-                    Volume = 50
-                };
-
-                bool isSettingsSaved = await _userSettingsRepository.InsertUserSettingsAsync(userSettings);
-                if (!isSettingsSaved)
-                {
-                    return StatusCode(500, new { message = "User registered but failed to save settings." });
                 }
 
                 bool emailResult = await _emailSender.SendEmailAsync(user.Email, "Welcome to Our Website", "Thank you for registering!");
@@ -108,16 +84,34 @@ namespace FYP.Controllers
 
                 string token = _jwtService.GenerateJwtToken(user);
 
+                // Generate password reset link
+                var resetToken = Guid.NewGuid().ToString();
+                await _userService.StorePasswordResetTokenAsync(user.Id, resetToken);
+                var resetLink = $"http://localhost:5173/reset-password?email={Uri.EscapeDataString(user.Email)}&token={resetToken}";
+
+                // Construct login notification email with reset password link
+                string emailBody = $"Hello {user.Name},<br/><br/>"
+                                 + "You have successfully logged into your account.<br/><br/>"
+                                 + "If this was not you, please reset your password immediately by clicking the link below:<br/><br/>"
+                                 + $"<a href='{resetLink}'>Reset Your Password</a><br/><br/>"
+                                 + "Best Regards,<br/>Voice OF Customer Team";
+
+                bool emailSent = await _emailSender.SendEmailAsync(user.Email, "Login Notification", emailBody);
+
+                if (!emailSent)
+                {
+                    return StatusCode(500, new { message = "Login successful, but failed to send login notification email." });
+                }
+
                 return Ok(new
                 {
-                    message = "Login successful.",
+                    message = "Login successful. A notification email with a reset password link has been sent.",
                     token,
                     user = new
                     {
                         user.Id,
                         user.Name,
-                        user.Email,
-
+                        user.Email
                     }
                 });
             }
@@ -126,6 +120,7 @@ namespace FYP.Controllers
                 return StatusCode(500, new { message = "An error occurred while logging in.", details = ex.Message });
             }
         }
+
 
         // Forgot Password action
         [HttpPost("forget-password")]
@@ -221,24 +216,26 @@ namespace FYP.Controllers
         [HttpPut("update-password")]
         public async Task<IActionResult> UpdateUserPassword([FromBody] UpdatePasswordRequest request)
         {
-            if (request == null || string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.PasswordHash) || string.IsNullOrEmpty(request.NewPassword))
+            if (request == null || string.IsNullOrEmpty(request.Name) ||
+                string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.PasswordHash) ||
+                string.IsNullOrEmpty(request.NewPassword))
             {
                 return BadRequest(new { message = "Invalid password update data." });
             }
 
             try
             {
-                bool isPasswordUpdated = await _userService.UpdateUserPasswordAsync(request);
-                if (!isPasswordUpdated)
+                bool isUpdated = await _userService.UpdateUserPasswordAsync(request);
+                if (!isUpdated)
                 {
                     return BadRequest(new { message = "Failed to update password. Incorrect old password or update failed." });
                 }
 
-                return Ok(new { message = "Password updated successfully." });
+                return Ok(new { message = "Settings updated successfully." });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "An error occurred while updating password.", error = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while updating the settings.", error = ex.Message });
             }
         }
     }

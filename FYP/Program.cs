@@ -31,20 +31,27 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // JWT Authentication Service
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = false; // Set to true in production
+    options.SaveToken = true; // Save token for validation
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = issuer,
-            ValidAudience = audience,
-            IssuerSigningKey = new SymmetricSecurityKey(key)
-        };
-    });
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = issuer,
+        ValidAudience = audience,
+        IssuerSigningKey = new SymmetricSecurityKey(key),
+        ClockSkew = TimeSpan.Zero // Prevents allowing expired tokens for some extra time
+    };
+});
 
 // CORS policy (adjust as needed)
 builder.Services.AddCors(options =>
@@ -52,14 +59,13 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowSpecificOrigin",
         policy => policy.WithOrigins("http://localhost:5173") // Add your frontend URL here
                         .AllowAnyMethod()
-                        .AllowAnyHeader());
+                        .AllowAnyHeader()
+                        .AllowCredentials());
 });
 
 // Register repositories and services
 builder.Services.AddSingleton<DbHelper>(); // Assuming it doesn't need parameters
-builder.Services.AddScoped<UserRepository>(provider => new UserRepository(connectionString));
 builder.Services.AddScoped<NotificationRepository>(provider => new NotificationRepository(connectionString));
-builder.Services.AddScoped<UserSettingsRepository>(provider => new UserSettingsRepository(connectionString));
 builder.Services.AddTransient<EmailService>(); // Ensure EmailService is added here
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<UserService>(); // Ensure UserService is registered correctly
