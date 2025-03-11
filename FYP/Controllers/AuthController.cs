@@ -52,7 +52,13 @@ namespace FYP.Controllers
                     return StatusCode(500, new { message = "User registration failed." });
                 }
 
-                bool emailResult = await _emailSender.SendEmailAsync(user.Email, "Welcome to Our Website", "Thank you for registering!");
+                // Sending registration notification email
+                string emailBody = $"Hello {user.Name},<br/><br/>"
+                                 + "Welcome to [Voice OF Customer]! Your registration was successful.<br/><br/>"
+                                 + "You can now log in using your credentials.<br/><br/>"
+                                 + "Best Regards,<br/>[Voice OF Customer] Team";
+
+                bool emailResult = await _emailSender.SendEmailAsync(user.Email, "Registration Successful", emailBody);
                 if (!emailResult)
                 {
                     return StatusCode(500, new { message = "Failed to send welcome email." });
@@ -186,6 +192,18 @@ namespace FYP.Controllers
                     return StatusCode(500, new { message = "Password update failed." });
                 }
 
+                // Send notification email
+                string emailBody = $"Hello {user.Name},<br/><br/>"
+                                 + "Your password has been successfully reset.<br/><br/>"
+                                 + "If you did not request this change, please contact our support immediately.<br/><br/>"
+                                 + "Best Regards,<br/>Voice OF Customer Team";
+
+                bool emailSent = await _emailSender.SendEmailAsync(user.Email, "Password Reset Successful", emailBody);
+                if (!emailSent)
+                {
+                    return StatusCode(500, new { message = "Password reset successful, but failed to send notification email." });
+                }
+
                 return Ok(new { message = "Password has been reset successfully." });
             }
             catch (Exception ex)
@@ -193,6 +211,7 @@ namespace FYP.Controllers
                 return StatusCode(500, new { message = "An error occurred.", details = ex.Message });
             }
         }
+
 
 
         [HttpGet("profile/{userId}")]
@@ -229,6 +248,18 @@ namespace FYP.Controllers
                 if (!isUpdated)
                 {
                     return BadRequest(new { message = "Failed to update password. Incorrect old password or update failed." });
+                }
+
+                // Send notification email
+                string emailBody = $"Hello {request.Name},<br/><br/>"
+                                 + "Your password has been successfully updated.<br/><br/>"
+                                 + "If you did not make this change, please contact our support immediately.<br/><br/>"
+                                 + "Best Regards,<br/>Voice OF Customer Team";
+
+                bool emailSent = await _emailSender.SendEmailAsync(request.Email, "Password Update Successful", emailBody);
+                if (!emailSent)
+                {
+                    return StatusCode(500, new { message = "Password updated, but failed to send notification email." });
                 }
 
                 return Ok(new { message = "Settings updated successfully." });
