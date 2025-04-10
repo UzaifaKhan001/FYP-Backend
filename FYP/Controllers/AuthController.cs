@@ -39,20 +39,19 @@ namespace FYP.Controllers
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
-            if (request == null || string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.PasswordHash))
+            if (request == null || string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.Password))
             {
                 return BadRequest(new { message = "Invalid registration data." });
             }
 
             try
             {
-                var user = await _userService.RegisterAsync(request.Name, request.Email, request.PasswordHash);
+                var user = await _userService.RegisterAsync(request.Name, request.Email, request.Password, request.BusinessType);
                 if (user == null)
                 {
                     return StatusCode(500, new { message = "User registration failed." });
                 }
 
-                // Sending registration notification email
                 string emailBody = $"Hello {user.Name},<br/><br/>"
                                  + "Welcome to [Voice OF Customer]! Your registration was successful.<br/><br/>"
                                  + "You can now log in using your credentials.<br/><br/>"
@@ -68,21 +67,21 @@ namespace FYP.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "An error occurred while processing your registration.", details = ex.Message });
+                return StatusCode(500, new { message = "An error occurred during registration.", details = ex.Message });
             }
         }
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
-            if (request == null || string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.PasswordHash))
+            if (request == null || string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.Password))
             {
                 return BadRequest(new { message = "Invalid login data." });
             }
 
             try
             {
-                var user = await _userService.AuthenticateAsync(request.Email, request.PasswordHash);
+                var user = await _userService.AuthenticateAsync(request.Email, request.Password);
                 if (user == null)
                 {
                     return Unauthorized(new { message = "Invalid credentials." });
@@ -97,10 +96,10 @@ namespace FYP.Controllers
 
                 // Construct login notification email with reset password link
                 string emailBody = $"Hello {user.Name},<br/><br/>"
-                                 + "You have successfully logged into your account.<br/><br/>"
-                                 + "If this was not you, please reset your password immediately by clicking the link below:<br/><br/>"
-                                 + $"<a href='{resetLink}'>Reset Your Password</a><br/><br/>"
-                                 + "Best Regards,<br/>Voice OF Customer Team";
+                                   + "You have successfully logged into your account.<br/><br/>"
+                                   + "If this was not you, please reset your password immediately by clicking the link below:<br/><br/>"
+                                   + $"<a href='{resetLink}'>Reset Your Password</a><br/><br/>"
+                                   + "Best Regards,<br/>Voice OF Customer Team";
 
                 bool emailSent = await _emailSender.SendEmailAsync(user.Email, "Login Notification", emailBody);
 
@@ -212,7 +211,35 @@ namespace FYP.Controllers
             }
         }
 
+        [HttpPost("verify-reset-token")]
+        public async Task<IActionResult> VerifyResetToken([FromBody] VerifyTokenRequest request)
+        {
+            try
+            {
+                var user = await _userService.GetUserByEmailAsync(request.Email);
+                if (user == null)
+                {
+                    return Ok(new { isValid = false, message = "User not found." });
+                }
 
+                // Validate the reset token
+                if (string.IsNullOrEmpty(user.ResetToken) || user.ResetToken != request.Token)
+                {
+                    return Ok(new { isValid = false, message = "Invalid reset token." });
+                }
+
+                if (!user.ResetTokenExpiration.HasValue || user.ResetTokenExpiration < DateTime.UtcNow)
+                {
+                    return Ok(new { isValid = false, message = "Reset token has expired." });
+                }
+
+                return Ok(new { isValid = true, message = "Token is valid." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "An error occurred while verifying token." });
+            }
+        }
 
         [HttpGet("profile/{userId}")]
         public async Task<IActionResult> GetUserProfile(int userId)
@@ -270,4 +297,9 @@ namespace FYP.Controllers
             }
         }
     }
+}
+public class VerifyTokenRequest
+{
+    public string Email { get; set; }
+    public string Token { get; set; }
 }

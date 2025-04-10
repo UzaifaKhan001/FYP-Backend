@@ -54,24 +54,13 @@
                                 ResetTokenExpiration = reader.IsDBNull(6) ? (DateTime?)null : reader.GetDateTime(6)
                             };
 
-                            // Log user details for debugging
-                            Console.WriteLine($"User Found: {user.Email}");
-                            Console.WriteLine($"Stored Hash: {user.PasswordHash}");
-
                             // Verify the password using BCrypt
                             if (!BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
                             {
-                                Console.WriteLine($"Entered Password: {password}");
-                                Console.WriteLine("Password verification failed.");
                                 throw new UnauthorizedAccessException("Invalid credentials");
                             }
 
-                            Console.WriteLine("Password verification succeeded.");
                             return user;
-                        }
-                        else
-                        {
-                            Console.WriteLine($"No user found for email: {email}");
                         }
                     }
                 }
@@ -81,8 +70,9 @@
         }
 
 
+
         // Register User
-        public async Task<User> RegisterAsync(string name, string email, string password)
+        public async Task<User> RegisterAsync(string name, string email, string password, string businessType)
         {
             var existingUser = await GetUserByEmailAsync(email);
             if (existingUser != null)
@@ -90,19 +80,17 @@
                 throw new Exception("Email is already in use.");
             }
 
-            // Use bcrypt to securely hash the password
             var hashedPassword = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12);
 
-            // Ensure hashed password is valid (should be at least 60 chars, starts with "$2")
             if (string.IsNullOrWhiteSpace(hashedPassword) || !hashedPassword.StartsWith("$2"))
             {
                 throw new Exception("Failed to generate a valid password hash.");
             }
 
             const string insertUserQuery = @"
-    INSERT INTO Users (Name, Email, PasswordHash, CreatedAt) 
-    OUTPUT INSERTED.Id 
-    VALUES (@Name, @Email, @PasswordHash, @CreatedAt)";
+        INSERT INTO Users (Name, Email, PasswordHash, BusinessType, CreatedAt) 
+        OUTPUT INSERTED.Id 
+        VALUES (@Name, @Email, @PasswordHash, @BusinessType, @CreatedAt)";
 
             using (var connection = new SqlConnection(_connectionString))
             {
@@ -113,11 +101,11 @@
                     command.Parameters.AddWithValue("@Name", name);
                     command.Parameters.AddWithValue("@Email", email);
                     command.Parameters.AddWithValue("@PasswordHash", hashedPassword);
+                    command.Parameters.AddWithValue("@BusinessType", businessType ?? string.Empty);
                     command.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
 
                     var userId = (int)await command.ExecuteScalarAsync();
 
-                    // Send notification after successful registration
                     await InsertNotificationAsync(connection, userId, "Welcome! Your account has been created successfully.");
 
                     return new User
@@ -126,7 +114,8 @@
                         Name = name,
                         Email = email,
                         PasswordHash = hashedPassword,
-                        CreatedAt = DateTime.UtcNow
+                        CreatedAt = DateTime.UtcNow,
+                        BusinessType = businessType
                     };
                 }
             }
@@ -148,6 +137,8 @@
                 await command.ExecuteNonQueryAsync();
             }
         }
+
+
 
 
         // Get User Profile by UserId
@@ -227,7 +218,7 @@
 
         public async Task<bool> StorePasswordResetTokenAsync(int userId, string token)
         {
-            const string query = "UPDATE Users SET ResetToken = @Token, ResetTokenExpiration = @Expiration, UpdatedAt = @UpdatedAt WHERE Id = @UserId";
+            const string query = "UPDATE Users SET ResetToken = @Token, ResetTokenExpiration = @Expiration WHERE Id = @UserId";
 
             using (var connection = new SqlConnection(_connectionString))
             {
@@ -235,8 +226,7 @@
                 using (var command = new SqlCommand(query, connection))
                 {
                     command.Parameters.AddWithValue("@Token", token);
-                    command.Parameters.AddWithValue("@Expiration", DateTime.UtcNow.AddHours(1)); // ✅ Token valid for 1 hour
-                    command.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
+                    command.Parameters.AddWithValue("@Expiration", DateTime.UtcNow.AddHours(1));
                     command.Parameters.AddWithValue("@UserId", userId);
 
                     int rowsAffected = await command.ExecuteNonQueryAsync();
@@ -244,7 +234,6 @@
                 }
             }
         }
-
         //update password
         public async Task<bool> UpdateUserPasswordAsync(UpdatePasswordRequest request)
         {
